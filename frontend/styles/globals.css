@@ -1,0 +1,40 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --app-bg: #f8fafc;
+  --app-ink: #122033;
+}
+
+html,
+body,
+#__next {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(201, 155, 43, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(68, 118, 196, 0.16), transparent 28%),
+    linear-gradient(180deg, #fffdf8 0%, var(--app-bg) 52%, #edf3fb 100%);
+  color: var(--app-ink);
+  font-family: "Manrope", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.message-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.message-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(18, 32, 51, 0.15);
+  border-radius: 999px;
+}

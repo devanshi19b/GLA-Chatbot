@@ -1,0 +1,6 @@
+backend/venv/
+backend/faiss_index/
+frontend/node_modules/
+frontend/.next/
+__pycache__/
+.DS_Store
