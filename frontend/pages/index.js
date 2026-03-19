@@ -23,6 +23,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const bottomRef = useRef(null);
+  const conversationCount = Math.max(messages.length - 1, 0);
+  const trimmedInput = input.trim();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -163,9 +165,14 @@ export default function Home() {
             <div className="border-b border-white/10 px-6 py-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-300/90">
-                    Live chat
-                  </p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-300/90">
+                      Live chat
+                    </p>
+                    <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                      {loading ? "Searching" : "Ready"}
+                    </span>
+                  </div>
                   <p className="mt-2 text-sm text-slate-300">
                     Ask about admissions, courses, facilities, placements, fees, or anything explicitly
                     present in the brochure.
@@ -184,6 +191,11 @@ export default function Home() {
             </div>
 
             <div className="message-scrollbar flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
+              <div className="flex items-center justify-between px-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+                <span>{conversationCount} messages</span>
+                <span>Brochure only</span>
+              </div>
+
               {messages.map((message, index) => (
                 <div
                   key={`${message.role}-${index}`}
@@ -225,18 +237,24 @@ export default function Home() {
               )}
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                <textarea
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  rows={3}
-                  placeholder="Ask a question about the brochure..."
-                  className="min-h-[72px] flex-1 resize-none rounded-3xl border border-white/10 bg-white/[0.08] px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/70 focus:ring-2 focus:ring-amber-300/20"
-                />
+                <div className="flex-1">
+                  <textarea
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    rows={3}
+                    placeholder="Ask a question about the brochure..."
+                    className="min-h-[72px] w-full resize-none rounded-3xl border border-white/10 bg-white/[0.08] px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/70 focus:ring-2 focus:ring-amber-300/20"
+                  />
+                  <div className="mt-2 flex items-center justify-between px-1 text-xs text-slate-400">
+                    <span>Press Enter to send, Shift + Enter for a new line</span>
+                    <span>{trimmedInput.length} chars</span>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={sendMessage}
-                  disabled={loading}
+                  disabled={loading || !trimmedInput}
                   className="rounded-3xl bg-gradient-to-r from-amber-400 to-orange-400 px-6 py-4 text-sm font-semibold text-slate-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {loading ? "Sending..." : "Send"}
