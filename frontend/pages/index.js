@@ -11,6 +11,12 @@ const starterMessage = {
   sources: [],
 };
 
+const exampleQuestions = [
+  "What courses are mentioned in the brochure?",
+  "What does the brochure say about placements?",
+  "What facilities are available on campus?",
+];
+
 export default function Home() {
   const [messages, setMessages] = useState([starterMessage]);
   const [input, setInput] = useState("");
@@ -74,6 +80,20 @@ export default function Home() {
     }
   };
 
+  const handleExampleClick = (question) => {
+    setInput(question);
+  };
+
+  const clearChat = () => {
+    if (loading) {
+      return;
+    }
+
+    setMessages([starterMessage]);
+    setInput("");
+    setError("");
+  };
+
   return (
     <>
       <Head>
@@ -119,17 +139,48 @@ export default function Home() {
                 </p>
               </div>
             </div>
+
+            <div className="mt-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand.ink/55">
+                Try these
+              </p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                {exampleQuestions.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => handleExampleClick(question)}
+                    className="rounded-full border border-brand.ink/10 bg-white px-4 py-2 text-left text-sm text-brand.ink/80 transition hover:border-brand.gold/60 hover:text-brand.ink"
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
 
           <section className="flex min-h-[640px] flex-1 flex-col overflow-hidden rounded-[32px] border border-white/60 bg-slate-950/95 shadow-panel">
             <div className="border-b border-white/10 px-6 py-5">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-300/90">
-                Live chat
-              </p>
-              <p className="mt-2 text-sm text-slate-300">
-                Ask about admissions, courses, facilities, placements, fees, or anything explicitly
-                present in the brochure.
-              </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-300/90">
+                    Live chat
+                  </p>
+                  <p className="mt-2 text-sm text-slate-300">
+                    Ask about admissions, courses, facilities, placements, fees, or anything explicitly
+                    present in the brochure.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={clearChat}
+                  disabled={loading}
+                  className="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-amber-300/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Clear chat
+                </button>
+              </div>
             </div>
 
             <div className="message-scrollbar flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
