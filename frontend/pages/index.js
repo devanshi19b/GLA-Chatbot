@@ -7,7 +7,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const starterMessage = {
   role: "assistant",
   content:
-    "Ask me anything from the GLA University brochure. If the brochure does not mention it, I will say so.",
+    "Ask me anything from the GLA University brochures. If the brochures do not mention it, I will say so.",
   sources: [],
 };
 
@@ -102,7 +102,7 @@ export default function Home() {
         <title>GLA University Brochure Chatbot</title>
         <meta
           name="description"
-          content="A RAG chatbot that answers only from the GLA University brochure."
+          content="A RAG chatbot that answers only from the uploaded GLA University brochures."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
@@ -118,8 +118,8 @@ export default function Home() {
               GLA University brochure assistant
             </h1>
             <p className="mt-5 max-w-xl text-sm leading-7 text-brand.ink/75 sm:text-base">
-              This chatbot only answers from the uploaded brochure PDF. It does not use outside
-              knowledge, and if the brochure does not cover something, it says that directly.
+              This chatbot only answers from the uploaded brochure PDFs. It does not use outside
+              knowledge, and if the brochures do not cover something, it says that directly.
             </p>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -175,7 +175,7 @@ export default function Home() {
                   </div>
                   <p className="mt-2 text-sm text-slate-300">
                     Ask about admissions, courses, facilities, placements, fees, or anything explicitly
-                    present in the brochure.
+                    present in the brochures.
                   </p>
                 </div>
 
@@ -193,7 +193,7 @@ export default function Home() {
             <div className="message-scrollbar flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
               <div className="flex items-center justify-between px-1 text-xs uppercase tracking-[0.18em] text-slate-400">
                 <span>{conversationCount} messages</span>
-                <span>Brochure only</span>
+                <span>Brochures only</span>
               </div>
 
               {messages.map((message, index) => (
@@ -221,7 +221,7 @@ export default function Home() {
               {loading && (
                 <div className="flex justify-start">
                   <div className="max-w-sm rounded-3xl rounded-bl-md border border-white/10 bg-white/[0.08] px-4 py-3 text-sm text-slate-200">
-                    Searching brochure and drafting a grounded answer...
+                    Searching brochures and drafting a grounded answer...
                   </div>
                 </div>
               )}
@@ -243,7 +243,7 @@ export default function Home() {
                     onChange={(event) => setInput(event.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={3}
-                    placeholder="Ask a question about the brochure..."
+                    placeholder="Ask a question about the brochures..."
                     className="min-h-[72px] w-full resize-none rounded-3xl border border-white/10 bg-white/[0.08] px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/70 focus:ring-2 focus:ring-amber-300/20"
                   />
                   <div className="mt-2 flex items-center justify-between px-1 text-xs text-slate-400">

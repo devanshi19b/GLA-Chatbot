@@ -60,6 +60,16 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "message": "GLA University Brochure Chatbot API is running.",
+        "health": "/health",
+        "docs": "/docs",
+        "chat": "/chat",
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     if getattr(app.state, "startup_error", None):
