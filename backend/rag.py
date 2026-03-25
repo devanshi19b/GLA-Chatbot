@@ -30,7 +30,7 @@ class BrochureRAG:
                 "Gemini API key is missing. Add GEMINI_API_KEY or GOOGLE_API_KEY to backend/.env before starting the API."
             )
 
-        self.chunk_size = int(os.getenv("CHUNK_SIZE", "1200"))
+        self.chunk_size = int(os.getenv("CHUNK_SIZE", "2500"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
         self.top_k = int(os.getenv("TOP_K", "4"))
         self.chat_model = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
@@ -76,17 +76,22 @@ class BrochureRAG:
             raise FileNotFoundError(f"No brochure PDFs found in {DATA_DIR}")
         return pdf_paths
 
-    def _build_index_manifest(self) -> list[dict[str, int | str]]:
-        return [
-            {
-                "name": pdf_path.name,
-                "size": pdf_path.stat().st_size,
-                "mtime_ns": pdf_path.stat().st_mtime_ns,
-            }
-            for pdf_path in self.pdf_paths
-        ]
+    def _build_index_manifest(self) -> dict[str, Any]:
+        return {
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "embedding_model": self.embedding_model,
+            "files": [
+                {
+                    "name": pdf_path.name,
+                    "size": pdf_path.stat().st_size,
+                    "mtime_ns": pdf_path.stat().st_mtime_ns,
+                }
+                for pdf_path in self.pdf_paths
+            ],
+        }
 
-    def _index_is_current(self, manifest: list[dict[str, int | str]]) -> bool:
+    def _index_is_current(self, manifest: dict[str, Any]) -> bool:
         if not INDEX_DIR.exists() or not INDEX_MANIFEST_PATH.exists():
             return False
 
