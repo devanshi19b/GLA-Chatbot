@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,41 @@ DATA_DIR = PROJECT_ROOT / "data"
 INDEX_DIR = BASE_DIR / "faiss_index"
 INDEX_MANIFEST_PATH = BASE_DIR / "faiss_index_manifest.json"
 FALLBACK_ANSWER = "Information not available in the brochure"
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "with",
+}
+NOISE_PATTERNS = (
+    "information brochure",
+    "and many more",
+    "nurturing excellence",
+    "inspiring futures",
+)
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -114,6 +150,50 @@ class BrochureRAG:
 
         return documents
 
+    def _normalize_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text.replace("\x00", " ")).strip()
+
+    def _tokenize(self, text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]+", text.lower())
+            if len(token) > 2 and token not in STOPWORDS
+        }
+
+    def _looks_like_noise(self, text: str) -> bool:
+        normalized_text = self._normalize_text(text)
+        lowercase_text = normalized_text.lower()
+
+        if len(normalized_text) < 80:
+            return True
+
+        unique_tokens = self._tokenize(normalized_text)
+        if len(unique_tokens) < 8:
+            return True
+
+        uppercase_letters = sum(1 for character in normalized_text if character.isalpha() and character.isupper())
+        total_letters = sum(1 for character in normalized_text if character.isalpha())
+        uppercase_ratio = uppercase_letters / total_letters if total_letters else 0
+
+        contains_noise_phrase = any(pattern in lowercase_text for pattern in NOISE_PATTERNS)
+        return contains_noise_phrase and uppercase_ratio > 0.45 and len(unique_tokens) < 35
+
+    def _score_match(self, question: str, document: Any, score: float | None) -> float:
+        normalized_question = self._normalize_text(question)
+        normalized_content = self._normalize_text(document.page_content)
+
+        question_tokens = self._tokenize(normalized_question)
+        content_tokens = self._tokenize(normalized_content)
+
+        overlap_count = len(question_tokens & content_tokens)
+        overlap_ratio = overlap_count / len(question_tokens) if question_tokens else 0.0
+
+        semantic_score = score if score is not None else 0.0
+        noise_penalty = 0.35 if self._looks_like_noise(normalized_content) else 0.0
+        exact_phrase_bonus = 0.15 if normalized_question.lower() in normalized_content.lower() else 0.0
+
+        return semantic_score + (overlap_ratio * 0.8) + exact_phrase_bonus - noise_penalty
+
     def _load_or_build_vector_store(self) -> FAISS:
         manifest = self._build_index_manifest()
         if self._index_is_current(manifest):
@@ -143,21 +223,43 @@ class BrochureRAG:
         return vector_store
 
     def _retrieve_documents(self, question: str) -> list[tuple[Any, float | None]]:
+        candidate_count = max(self.top_k * 4, 8)
+
         try:
             matches = self.vector_store.similarity_search_with_relevance_scores(
                 question,
-                k=self.top_k,
+                k=candidate_count,
             )
         except Exception:
             matches = [
                 (document, None)
-                for document in self.vector_store.similarity_search(question, k=self.top_k)
+                for document in self.vector_store.similarity_search(question, k=candidate_count)
             ]
 
-        cleaned_matches: list[tuple[Any, float | None]] = []
+        rescored_matches: list[tuple[Any, float | None, float]] = []
         for document, score in matches:
             if document.page_content.strip():
-                cleaned_matches.append((document, score))
+                rescored_matches.append((document, score, self._score_match(question, document, score)))
+
+        rescored_matches.sort(key=lambda item: item[2], reverse=True)
+
+        cleaned_matches: list[tuple[Any, float | None]] = []
+        seen_sources: set[tuple[str, Any]] = set()
+
+        for document, score, _ in rescored_matches:
+            source_key = (
+                document.metadata.get("source_file", "unknown.pdf"),
+                document.metadata.get("page"),
+            )
+            if source_key in seen_sources:
+                continue
+
+            seen_sources.add(source_key)
+            cleaned_matches.append((document, score))
+
+            if len(cleaned_matches) >= self.top_k:
+                break
+
         return cleaned_matches
 
     def _build_context(self, matches: list[tuple[Any, float | None]]) -> tuple[str, list[str]]:
@@ -192,4 +294,4 @@ class BrochureRAG:
         if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
             answer = FALLBACK_ANSWER
 
-        return {"answer": answer, "sources": sources}
+        return {"answer": answer}
