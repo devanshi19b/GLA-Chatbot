@@ -66,7 +66,8 @@ export default function Home() {
         ...currentMessages,
         {
           role: "assistant",
-          content: "Information not available in the brochure",
+          content:
+            "I couldn't fetch a brochure-grounded answer because the backend request failed. Please verify the API server is running and try again.",
           sources: [],
         },
       ]);
