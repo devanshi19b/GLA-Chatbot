@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from openai import OpenAI
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -24,50 +24,32 @@ load_dotenv(BASE_DIR / ".env")
 
 class BrochureRAG:
     def __init__(self) -> None:
-        self.api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
+        self.embedding_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not self.embedding_api_key:
             raise ValueError(
                 "Gemini API key is missing. Add GEMINI_API_KEY or GOOGLE_API_KEY to backend/.env before starting the API."
+            )
+        self.llm_api_key = os.getenv("XAI_API_KEY")
+        if not self.llm_api_key:
+            raise ValueError(
+                "Grok API key is missing. Add XAI_API_KEY to backend/.env before starting the API."
             )
 
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "1200"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
         self.top_k = int(os.getenv("TOP_K", "4"))
-        self.chat_model = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
+        self.chat_model = "grok-2-latest"
         self.embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
         self.pdf_paths = self._get_pdf_paths()
 
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=self.embedding_model,
-            google_api_key=self.api_key,
+            google_api_key=self.embedding_api_key,
         )
         self.vector_store = self._load_or_build_vector_store()
-        self.llm = ChatGoogleGenerativeAI(
-            model=self.chat_model,
-            temperature=0,
-            google_api_key=self.api_key,
-        )
-        self.prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "You are a brochure-grounded assistant for GLA University. "
-                        "Answer ONLY from the supplied brochure context. "
-                        "Do not use outside knowledge, do not infer facts that are not clearly supported, "
-                        "and keep the answer short and accurate. "
-                        f"If the context does not contain the answer, reply exactly with: {FALLBACK_ANSWER}"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "Question:\n{question}\n\n"
-                        "Brochure context:\n{context}\n\n"
-                        "Return only the final answer."
-                    ),
-                ),
-            ]
+        self.llm = OpenAI(
+            api_key=self.llm_api_key,
+            base_url="https://api.x.ai/v1",
         )
 
     def _get_pdf_paths(self) -> list[Path]:
@@ -170,6 +152,39 @@ class BrochureRAG:
         unique_sources = list(dict.fromkeys(sources))
         return "\n\n".join(context_parts), unique_sources
 
+    def generate_response(self, query: str, context: str) -> str:
+        if not context.strip():
+            return FALLBACK_ANSWER
+
+        response = self.llm.chat.completions.create(
+            model=self.chat_model,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a brochure-grounded assistant for GLA University. "
+                        "Answer only from the supplied brochure context. "
+                        "Do not use outside knowledge. Do not infer unsupported facts. "
+                        "Keep the answer short and accurate. "
+                        f"If the context does not contain the answer, reply exactly with: {FALLBACK_ANSWER}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Question:\n{query}\n\n"
+                        f"Brochure context:\n{context}\n\n"
+                        "Return only the final answer."
+                    ),
+                },
+            ],
+        )
+        answer = (response.choices[0].message.content or "").strip()
+        if not answer or FALLBACK_ANSWER.lower() in answer.lower():
+            return FALLBACK_ANSWER
+        return answer
+
     def ask(self, question: str) -> dict[str, Any]:
         normalized_question = question.strip()
         if not normalized_question:
@@ -180,11 +195,5 @@ class BrochureRAG:
             return {"answer": FALLBACK_ANSWER, "sources": []}
 
         context, sources = self._build_context(matches)
-        chain = self.prompt | self.llm
-        response = chain.invoke({"question": normalized_question, "context": context})
-        answer = getattr(response, "content", "").strip() or FALLBACK_ANSWER
-
-        if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
-            answer = FALLBACK_ANSWER
-
+        answer = self.generate_response(normalized_question, context)
         return {"answer": answer, "sources": sources}
