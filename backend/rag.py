@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
+<<<<<<< HEAD
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -21,6 +21,43 @@ try:
     from .ingestion import DATA_DIR, ensure_data_directories
 except ImportError:
     from ingestion import DATA_DIR, ensure_data_directories
+=======
+from langchain_core.embeddings import Embeddings
+from openai import OpenAI
+
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+DATA_DIR = PROJECT_ROOT / "data"
+INDEX_DIR = BASE_DIR / "faiss_index"
+INDEX_MANIFEST_PATH = BASE_DIR / "faiss_index_manifest.json"
+FALLBACK_ANSWER = "Information not available in the brochure"
+
+load_dotenv(BASE_DIR / ".env")
+
+
+class GrokEmbeddings(Embeddings):
+    """Custom embeddings class for Grok API using OpenAI SDK."""
+    
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
+        self.client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+        self.model = model
+    
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed documents using Grok API."""
+        response = self.client.embeddings.create(
+            input=texts,
+            model=self.model,
+        )
+        return [item.embedding for item in response.data]
+    
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single query using Grok API."""
+        response = self.client.embeddings.create(
+            input=text,
+            model=self.model,
+        )
+        return response.data[0].embedding
+>>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -129,16 +166,24 @@ load_dotenv(BASE_DIR / ".env")
 
 class BrochureRAG:
     def __init__(self) -> None:
+<<<<<<< HEAD
         ensure_data_directories()
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Groq API key is missing. Add GROQ_API_KEY to backend/.env before starting the API."
+=======
+        self.api_key = os.getenv("GROK_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "Grok API key is missing. Add GROK_API_KEY to backend/.env before starting the API."
+>>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
             )
 
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "2500"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
         self.top_k = int(os.getenv("TOP_K", "4"))
+<<<<<<< HEAD
         self.chat_model = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
         self.embedding_model = os.getenv("HF_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.source_paths = self._get_source_paths()
@@ -172,6 +217,27 @@ class BrochureRAG:
                     ),
                 ),
             ]
+=======
+        self.chat_model = os.getenv("GROK_CHAT_MODEL", "grok-2")
+        self.embedding_model = os.getenv("GROK_EMBEDDING_MODEL", "text-embedding-3-small")
+        self.pdf_paths = self._get_pdf_paths()
+
+        # Initialize Grok embeddings and client
+        self.embeddings = GrokEmbeddings(api_key=self.api_key, model=self.embedding_model)
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.x.ai/v1",
+        )
+        
+        self.vector_store = self._load_or_build_vector_store()
+        
+        self.system_prompt = (
+            "You are a brochure-grounded assistant for GLA University. "
+            "Answer ONLY from the supplied brochure context. "
+            "Do not use outside knowledge, do not infer facts that are not clearly supported, "
+            "and keep the answer short and accurate. "
+            f"If the context does not contain the answer, reply exactly with: {FALLBACK_ANSWER}"
+>>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
         )
 
     def _build_embeddings(self) -> HuggingFaceEmbeddings:
@@ -762,6 +828,7 @@ class BrochureRAG:
             return {"answer": FALLBACK_ANSWER, "sources": []}
 
         context, sources = self._build_context(matches)
+<<<<<<< HEAD
         direct_answer = self._extract_direct_answer(interpreted_question, matches)
         if direct_answer:
             return {"answer": direct_answer, "sources": sources}
@@ -771,6 +838,22 @@ class BrochureRAG:
         answer = getattr(response, "content", "").strip() or FALLBACK_ANSWER
         if answer != FALLBACK_ANSWER:
             answer = self._clean_answer_text(answer) or FALLBACK_ANSWER
+=======
+        
+        # Use Grok API directly via OpenAI SDK
+        user_message = f"Question:\n{normalized_question}\n\nBrochure context:\n{context}\n\nReturn only the final answer."
+        
+        response = self.client.chat.completions.create(
+            model=self.chat_model,
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0,
+        )
+        
+        answer = response.choices[0].message.content.strip() or FALLBACK_ANSWER
+>>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
 
         if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
             answer = FALLBACK_ANSWER
