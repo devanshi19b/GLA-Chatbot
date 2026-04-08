@@ -188,18 +188,28 @@ def _record_path_for_url(url: str) -> Path:
     return WEB_CACHE_DIR / f"{slug}-{digest}.json"
 
 
-def crawl_site(start_url: str, max_pages: int, allowed_domains: set[str]) -> dict[str, Any]:
+def crawl_site(start_url: str | list[str], max_pages: int, allowed_domains: set[str]) -> dict[str, Any]:
     ensure_data_directories()
 
-    normalized_start = normalize_url(start_url)
-    if not normalized_start:
+    start_candidates = [start_url] if isinstance(start_url, str) else list(start_url)
+    normalized_starts: list[str] = []
+    seen_start_urls: set[str] = set()
+
+    for candidate in start_candidates:
+        normalized_candidate = normalize_url(candidate)
+        if not normalized_candidate or normalized_candidate in seen_start_urls:
+            continue
+        seen_start_urls.add(normalized_candidate)
+        normalized_starts.append(normalized_candidate)
+
+    if not normalized_starts:
         raise ValueError("A valid website URL is required.")
 
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
 
     robot_parsers: dict[str, RobotFileParser] = {}
-    queue: deque[str] = deque([normalized_start])
+    queue: deque[str] = deque(normalized_starts)
     visited: set[str] = set()
     saved_urls: list[str] = []
 
@@ -250,7 +260,8 @@ def crawl_site(start_url: str, max_pages: int, allowed_domains: set[str]) -> dic
         raise ValueError("No crawlable HTML pages were collected from that URL.")
 
     return {
-        "start_url": normalized_start,
+        "start_url": normalized_starts[0],
+        "seed_urls": normalized_starts,
         "pages_indexed": len(saved_urls),
         "urls": saved_urls,
     }

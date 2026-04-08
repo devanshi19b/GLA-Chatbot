@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from difflib import get_close_matches
 import json
 import os
 import re
@@ -56,16 +58,25 @@ STOPWORDS = {
 }
 QUERY_NOISE_TOKENS = {
     "according",
+    "about",
     "assistant",
     "chatbot",
     "count",
     "currently",
+    "give",
     "gla",
+    "know",
     "mentioned",
     "official",
+    "please",
+    "plese",
+    "share",
+    "show",
     "site",
     "student",
     "tell",
+    "ther",
+    "there",
     "university",
     "web",
     "website",
@@ -76,6 +87,42 @@ NOISE_PATTERNS = (
     "nurturing excellence",
     "inspiring futures",
 )
+DOMAIN_TERMS = {
+    "academic",
+    "admission",
+    "admissions",
+    "assistant",
+    "campus",
+    "course",
+    "courses",
+    "department",
+    "departments",
+    "diploma",
+    "doctorate",
+    "eligibility",
+    "engineering",
+    "faculty",
+    "facilities",
+    "hostel",
+    "infrastructure",
+    "lab",
+    "labs",
+    "laboratories",
+    "mba",
+    "member",
+    "members",
+    "pharmacy",
+    "placement",
+    "placements",
+    "programme",
+    "programmes",
+    "scholarship",
+    "scholarships",
+    "syllabus",
+    "tuition",
+    "university",
+    "website",
+}
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -100,6 +147,7 @@ class BrochureRAG:
             model_name=self.embedding_model,
         )
         self.vector_store = self._load_or_build_vector_store()
+        self.query_vocabulary, self.query_vocabulary_by_initial = self._build_query_vocabulary()
         self.llm = ChatGroq(
             model=self.chat_model,
             temperature=0,
@@ -245,6 +293,87 @@ class BrochureRAG:
             if len(token) > 2 and token not in STOPWORDS
         }
 
+    def _build_query_vocabulary(self) -> tuple[set[str], dict[str, list[str]]]:
+        token_counts: Counter[str] = Counter(DOMAIN_TERMS)
+        docstore_entries = getattr(getattr(self.vector_store, "docstore", None), "_dict", {})
+
+        for document in docstore_entries.values():
+            text_parts = [
+                self._normalize_text(document.page_content),
+                self._normalize_text(str(document.metadata.get("title", ""))),
+            ]
+            for text in text_parts:
+                for token in re.findall(r"[a-z]{4,}", text.lower()):
+                    if token not in STOPWORDS:
+                        token_counts[token] += 1
+
+        vocabulary = {
+            token
+            for token, count in token_counts.items()
+            if count >= 2 or token in DOMAIN_TERMS
+        }
+        vocabulary_by_initial: dict[str, list[str]] = {}
+        for token in sorted(vocabulary):
+            vocabulary_by_initial.setdefault(token[0], []).append(token)
+
+        return vocabulary, vocabulary_by_initial
+
+    def _correct_token_spelling(self, token: str) -> str:
+        lowercase_token = token.lower()
+        if (
+            len(lowercase_token) < 4
+            or lowercase_token in STOPWORDS
+            or lowercase_token in QUERY_NOISE_TOKENS
+            or lowercase_token in self.query_vocabulary
+        ):
+            return token
+
+        candidate_pool = self.query_vocabulary_by_initial.get(lowercase_token[0], [])
+        if not candidate_pool:
+            return token
+
+        cutoff = 0.9 if len(lowercase_token) <= 5 else 0.84
+        matches = get_close_matches(lowercase_token, candidate_pool, n=1, cutoff=cutoff)
+        if not matches:
+            return token
+
+        candidate = matches[0]
+        if abs(len(candidate) - len(lowercase_token)) > 2:
+            return token
+
+        if token.isupper():
+            return candidate.upper()
+        if token[:1].isupper():
+            return candidate.capitalize()
+        return candidate
+
+    def _correct_query_spelling(self, question: str) -> str:
+        parts = re.findall(r"[A-Za-z]+|[^A-Za-z]+", question)
+        corrected_parts = [
+            self._correct_token_spelling(part) if part.isalpha() else part
+            for part in parts
+        ]
+        return "".join(corrected_parts).strip()
+
+    def _question_variants(self, question: str) -> list[str]:
+        variants = [self._normalize_text(question)]
+        corrected_question = self._normalize_text(self._correct_query_spelling(question))
+        if corrected_question and corrected_question.lower() != variants[0].lower():
+            variants.append(corrected_question)
+        return variants
+
+    def _extract_subject_tokens(self, text: str) -> set[str]:
+        subject_tokens: set[str] = set()
+        for token in self._tokenize(text):
+            if token in QUERY_NOISE_TOKENS or token in {"many", "number"}:
+                continue
+
+            token_variants = self._token_variants(token)
+            if token in self.query_vocabulary or token_variants & self.query_vocabulary:
+                subject_tokens.add(token)
+
+        return subject_tokens
+
     def _token_variants(self, token: str) -> set[str]:
         variants = {token}
 
@@ -346,22 +475,45 @@ class BrochureRAG:
 
     def _retrieve_documents(self, question: str) -> list[tuple[Any, float | None]]:
         candidate_count = max(self.top_k * 4, 8)
+        raw_matches: list[tuple[str, Any, float | None]] = []
 
-        try:
-            matches = self.vector_store.similarity_search_with_relevance_scores(
-                question,
-                k=candidate_count,
-            )
-        except Exception:
-            matches = [
-                (document, None)
-                for document in self.vector_store.similarity_search(question, k=candidate_count)
-            ]
+        for question_variant in self._question_variants(question):
+            try:
+                matches = self.vector_store.similarity_search_with_relevance_scores(
+                    question_variant,
+                    k=candidate_count,
+                )
+            except Exception:
+                matches = [
+                    (document, None)
+                    for document in self.vector_store.similarity_search(question_variant, k=candidate_count)
+                ]
+
+            raw_matches.extend((question_variant, document, score) for document, score in matches)
 
         rescored_matches: list[tuple[Any, float | None, float]] = []
-        for document, score in matches:
-            if document.page_content.strip():
-                rescored_matches.append((document, score, self._score_match(question, document, score)))
+        best_scores_by_source: dict[tuple[str, Any, Any], float] = {}
+        best_match_by_source: dict[tuple[str, Any, Any], tuple[Any, float | None]] = {}
+
+        for question_variant, document, score in raw_matches:
+            if not document.page_content.strip():
+                continue
+
+            source_key = (
+                document.metadata.get("source_url") or document.metadata.get("source_file", "unknown-source"),
+                document.metadata.get("page"),
+                document.metadata.get("chunk_index"),
+            )
+            match_score = self._score_match(question_variant, document, score)
+            if match_score <= best_scores_by_source.get(source_key, float("-inf")):
+                continue
+
+            best_scores_by_source[source_key] = match_score
+            best_match_by_source[source_key] = (document, score)
+
+        for source_key, match_score in best_scores_by_source.items():
+            document, score = best_match_by_source[source_key]
+            rescored_matches.append((document, score, match_score))
 
         rescored_matches.sort(key=lambda item: item[2], reverse=True)
 
@@ -390,14 +542,11 @@ class BrochureRAG:
         if not docstore_entries:
             return []
 
-        normalized_question = self._normalize_text(question)
+        question_variants = self._question_variants(question)
+        normalized_question = self._normalize_text(question_variants[-1])
         lowercase_question = normalized_question.lower()
-        question_tokens = self._tokenize(normalized_question)
-        subject_tokens = {
-            token
-            for token in question_tokens
-            if token not in QUERY_NOISE_TOKENS and token not in {"many", "number"}
-        }
+        question_tokens = set().union(*(self._tokenize(question_variant) for question_variant in question_variants))
+        subject_tokens = self._extract_subject_tokens(normalized_question)
         subject_variants = {
             variant
             for token in subject_tokens
@@ -444,15 +593,41 @@ class BrochureRAG:
         unique_sources = list(dict.fromkeys(sources))
         return "\n\n".join(context_parts), unique_sources
 
-    def _extract_direct_answer(self, question: str, matches: list[tuple[Any, float | None]]) -> str | None:
+    def _merge_matches(
+        self,
+        primary_matches: list[tuple[Any, float | None]],
+        secondary_matches: list[tuple[Any, float | None]],
+    ) -> list[tuple[Any, float | None]]:
+        merged_matches: list[tuple[Any, float | None]] = []
+        seen_sources: set[tuple[str, Any, Any]] = set()
+
+        for document, score in [*primary_matches, *secondary_matches]:
+            source_key = (
+                document.metadata.get("source_url") or document.metadata.get("source_file", "unknown-source"),
+                document.metadata.get("page"),
+                document.metadata.get("chunk_index"),
+            )
+            if source_key in seen_sources:
+                continue
+
+            seen_sources.add(source_key)
+            merged_matches.append((document, score))
+
+            if len(merged_matches) >= self.top_k:
+                break
+
+        return merged_matches
+
+    def _extract_direct_answer(
+        self,
+        question: str,
+        matches: list[tuple[Any, float | None]],
+        minimum_score: float = 0.55,
+    ) -> str | None:
         normalized_question = self._normalize_text(question)
         lowercase_question = normalized_question.lower()
         question_tokens = self._tokenize(normalized_question)
-        subject_tokens = {
-            token
-            for token in question_tokens
-            if token not in QUERY_NOISE_TOKENS and token not in {"many", "number"}
-        }
+        subject_tokens = self._extract_subject_tokens(normalized_question)
         subject_variants = {
             variant
             for token in subject_tokens
@@ -512,40 +687,75 @@ class BrochureRAG:
                     best_score = score
                     best_candidate = candidate
 
-        if wants_number and best_score >= 0.42:
+        if wants_number and best_score >= min(minimum_score, 0.42):
             return best_candidate
 
-        if best_score >= 0.55:
+        if best_score >= minimum_score:
             return best_candidate
 
         return None
+
+    def _answer_needs_fallback(self, answer: str) -> bool:
+        normalized_answer = self._normalize_text(answer)
+        if not normalized_answer:
+            return True
+
+        if "[Chunk" in answer or len(normalized_answer) > 360:
+            return True
+
+        return normalized_answer.lower().count("placement statistics") >= 3
 
     def ask(self, question: str) -> dict[str, Any]:
         normalized_question = question.strip()
         if not normalized_question:
             return {"answer": FALLBACK_ANSWER, "sources": []}
 
-        if self._question_prefers_website(normalized_question):
-            website_matches = self._retrieve_website_documents(normalized_question)
-            if website_matches:
-                matches = website_matches
-            else:
-                matches = self._retrieve_documents(normalized_question)
+        question_variants = self._question_variants(normalized_question)
+        interpreted_question = question_variants[-1]
+        prompt_question = normalized_question
+        if interpreted_question.lower() != normalized_question.lower():
+            prompt_question = (
+                f"User question: {normalized_question}\n"
+                f"Likely typo-corrected question: {interpreted_question}"
+            )
+
+        website_matches = self._retrieve_website_documents(interpreted_question)
+        if website_matches:
+            website_context, website_sources = self._build_context(website_matches)
+            del website_context
+            website_direct_answer = self._extract_direct_answer(interpreted_question, website_matches)
+            if website_direct_answer:
+                return {"answer": website_direct_answer, "sources": website_sources}
+
+        general_matches = self._retrieve_documents(interpreted_question)
+
+        if website_matches:
+            matches = self._merge_matches(website_matches, general_matches)
         else:
-            matches = self._retrieve_documents(normalized_question)
+            matches = general_matches
+
         if not matches:
             return {"answer": FALLBACK_ANSWER, "sources": []}
 
         context, sources = self._build_context(matches)
-        direct_answer = self._extract_direct_answer(normalized_question, matches)
+        direct_answer = self._extract_direct_answer(interpreted_question, matches)
         if direct_answer:
             return {"answer": direct_answer, "sources": sources}
 
         chain = self.prompt | self.llm
-        response = chain.invoke({"question": normalized_question, "context": context})
+        response = chain.invoke({"question": prompt_question, "context": context})
         answer = getattr(response, "content", "").strip() or FALLBACK_ANSWER
 
         if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
             answer = FALLBACK_ANSWER
+
+        if answer != FALLBACK_ANSWER and self._answer_needs_fallback(answer):
+            fallback_answer = self._extract_direct_answer(
+                interpreted_question,
+                matches,
+                minimum_score=0.34,
+            )
+            if fallback_answer:
+                answer = fallback_answer
 
         return {"answer": answer, "sources": sources}

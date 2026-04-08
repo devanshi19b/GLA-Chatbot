@@ -55,6 +55,28 @@ def get_official_site_url() -> str:
     return os.getenv("OFFICIAL_SITE_URL", "https://www.gla.ac.in/info/common/").strip()
 
 
+def get_official_site_seed_urls() -> list[str]:
+    official_url = get_official_site_url()
+    configured_urls = [
+        candidate.strip()
+        for candidate in os.getenv("OFFICIAL_SITE_SEED_URLS", "").split(",")
+        if candidate.strip()
+    ]
+
+    seed_urls: list[str] = [official_url, *configured_urls]
+
+    unique_seed_urls: list[str] = []
+    seen_urls: set[str] = set()
+    for url in seed_urls:
+        cleaned_url = url.strip()
+        if not cleaned_url or cleaned_url in seen_urls:
+            continue
+        seen_urls.add(cleaned_url)
+        unique_seed_urls.append(cleaned_url)
+
+    return unique_seed_urls
+
+
 def get_official_site_max_pages() -> int:
     try:
         return max(1, min(50, int(os.getenv("OFFICIAL_SITE_MAX_PAGES", "12"))))
@@ -69,7 +91,7 @@ def sync_official_site(max_pages: int | None = None) -> dict[str, Any]:
         os.getenv("CRAWL_ALLOWED_DOMAINS"),
     )
     crawl_result = crawl_site(
-        start_url=official_url,
+        start_url=get_official_site_seed_urls(),
         max_pages=max_pages or get_official_site_max_pages(),
         allowed_domains=allowed_domains,
     )
