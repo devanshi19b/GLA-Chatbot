@@ -143,9 +143,7 @@ class BrochureRAG:
         self.embedding_model = os.getenv("HF_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.source_paths = self._get_source_paths()
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=self.embedding_model,
-        )
+        self.embeddings = self._build_embeddings()
         self.vector_store = self._load_or_build_vector_store()
         self.query_vocabulary, self.query_vocabulary_by_initial = self._build_query_vocabulary()
         self.llm = ChatGroq(
@@ -175,6 +173,18 @@ class BrochureRAG:
                 ),
             ]
         )
+
+    def _build_embeddings(self) -> HuggingFaceEmbeddings:
+        try:
+            return HuggingFaceEmbeddings(model_name=self.embedding_model)
+        except Exception as primary_error:
+            try:
+                return HuggingFaceEmbeddings(
+                    model_name=self.embedding_model,
+                    model_kwargs={"local_files_only": True},
+                )
+            except Exception:
+                raise primary_error
 
     def _get_source_paths(self) -> list[Path]:
         source_paths = [
@@ -285,6 +295,19 @@ class BrochureRAG:
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text.replace("\x00", " ")).strip()
+
+    def _clean_answer_text(self, answer: str) -> str:
+        cleaned_answer = self._normalize_text(answer)
+        if not cleaned_answer:
+            return ""
+
+        # Remove section/page numbering prefixes that often appear in brochure headings.
+        cleaned_answer = re.sub(
+            r"^\(?0\d{1,2}\)?(?:\s*[\].:-])?\s+",
+            "",
+            cleaned_answer,
+        )
+        return cleaned_answer.strip(" -:;,.")
 
     def _tokenize(self, text: str) -> set[str]:
         return {
@@ -636,7 +659,7 @@ class BrochureRAG:
 
         if "title" in lowercase_question:
             for document, _ in matches:
-                title = str(document.metadata.get("title", "")).strip()
+                title = self._clean_answer_text(str(document.metadata.get("title", "")))
                 if title:
                     return title
 
@@ -648,6 +671,7 @@ class BrochureRAG:
             segments = re.split(r"(?<=[.!?])\s+|\n+", document.page_content)
             for segment in segments:
                 candidate = self._normalize_text(segment)
+                candidate = self._clean_answer_text(candidate)
                 if len(candidate) < 20:
                     continue
 
@@ -745,6 +769,8 @@ class BrochureRAG:
         chain = self.prompt | self.llm
         response = chain.invoke({"question": prompt_question, "context": context})
         answer = getattr(response, "content", "").strip() or FALLBACK_ANSWER
+        if answer != FALLBACK_ANSWER:
+            answer = self._clean_answer_text(answer) or FALLBACK_ANSWER
 
         if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
             answer = FALLBACK_ANSWER

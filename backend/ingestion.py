@@ -188,6 +188,29 @@ def _record_path_for_url(url: str) -> Path:
     return WEB_CACHE_DIR / f"{slug}-{digest}.json"
 
 
+def _prune_stale_cache_entries(allowed_domains: set[str], fresh_urls: set[str]) -> None:
+    for cache_path in WEB_CACHE_DIR.glob("*.json"):
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        cached_url = normalize_url(str(payload.get("url", "")))
+        if not cached_url:
+            continue
+
+        if not is_allowed_domain(cached_url, allowed_domains):
+            continue
+
+        if cached_url in fresh_urls:
+            continue
+
+        try:
+            cache_path.unlink()
+        except OSError:
+            continue
+
+
 def crawl_site(start_url: str | list[str], max_pages: int, allowed_domains: set[str]) -> dict[str, Any]:
     ensure_data_directories()
 
@@ -258,6 +281,8 @@ def crawl_site(start_url: str | list[str], max_pages: int, allowed_domains: set[
 
     if not saved_urls:
         raise ValueError("No crawlable HTML pages were collected from that URL.")
+
+    _prune_stale_cache_entries(allowed_domains=allowed_domains, fresh_urls=set(saved_urls))
 
     return {
         "start_url": normalized_starts[0],

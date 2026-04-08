@@ -6,8 +6,8 @@
 
 :root {
   color-scheme: light;
-  --app-bg: #efe9ff;
-  --app-ink: #221a4e;
+  --app-bg: #eceee8;
+  --app-ink: #1f2f24;
 }
 
 html,
@@ -20,9 +20,9 @@ body {
   margin: 0;
   background:
     radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.24), transparent 18%),
-    radial-gradient(circle at 80% 20%, rgba(255, 196, 115, 0.18), transparent 18%),
-    radial-gradient(circle at 50% 85%, rgba(255, 255, 255, 0.16), transparent 28%),
-    linear-gradient(135deg, #8e2de2 0%, #6c63ff 36%, #4b8cff 100%);
+    radial-gradient(circle at 80% 20%, rgba(117, 153, 132, 0.16), transparent 18%),
+    radial-gradient(circle at 50% 85%, rgba(255, 255, 255, 0.14), transparent 28%),
+    linear-gradient(135deg, #0e3d24 0%, #1a5a34 44%, #45634d 100%);
   color: var(--app-ink);
   font-family: "Manrope", sans-serif;
   overflow: hidden;
@@ -37,6 +37,6 @@ body {
 }
 
 .message-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(18, 32, 51, 0.15);
+  background: rgba(19, 74, 40, 0.24);
   border-radius: 999px;
 }

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,6 +27,34 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+logger = logging.getLogger(__name__)
+_OFFICIAL_SYNC_LOCK = threading.Lock()
+_LAST_OFFICIAL_SYNC_TS = 0.0
+WEBSITE_QUESTION_KEYWORDS = {
+    "official",
+    "website",
+    "site",
+    "web",
+    "latest",
+    "recent",
+    "updated",
+    "current",
+    "today",
+}
+
+
+def _read_bool_env(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    lowered_value = raw_value.strip().lower()
+    if lowered_value in {"1", "true", "yes", "on"}:
+        return True
+    if lowered_value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="The user's question about the indexed GLA sources")
@@ -84,7 +115,29 @@ def get_official_site_max_pages() -> int:
         return 12
 
 
+def get_official_auto_sync_enabled() -> bool:
+    return _read_bool_env("OFFICIAL_SITE_AUTO_SYNC_ENABLED", True)
+
+
+def get_official_auto_sync_interval_seconds() -> int:
+    try:
+        return max(0, min(86_400, int(os.getenv("OFFICIAL_SITE_AUTO_SYNC_INTERVAL_SECONDS", "600"))))
+    except ValueError:
+        return 600
+
+
+def get_official_auto_sync_website_only() -> bool:
+    return _read_bool_env("OFFICIAL_SITE_AUTO_SYNC_WEBSITE_ONLY", True)
+
+
+def _question_targets_website(question: str) -> bool:
+    normalized_question = question.lower()
+    return any(keyword in normalized_question for keyword in WEBSITE_QUESTION_KEYWORDS)
+
+
 def sync_official_site(max_pages: int | None = None) -> dict[str, Any]:
+    global _LAST_OFFICIAL_SYNC_TS
+
     official_url = get_official_site_url()
     allowed_domains = build_allowed_domains(
         official_url,
@@ -96,7 +149,34 @@ def sync_official_site(max_pages: int | None = None) -> dict[str, Any]:
         allowed_domains=allowed_domains,
     )
     refresh_rag_service()
+    _LAST_OFFICIAL_SYNC_TS = time.time()
     return crawl_result
+
+
+def maybe_auto_sync_official_site(question: str) -> None:
+    if not get_official_auto_sync_enabled():
+        return
+
+    if get_official_auto_sync_website_only() and not _question_targets_website(question):
+        return
+
+    interval_seconds = get_official_auto_sync_interval_seconds()
+    now = time.time()
+    if interval_seconds > 0 and _LAST_OFFICIAL_SYNC_TS and (now - _LAST_OFFICIAL_SYNC_TS) < interval_seconds:
+        return
+
+    if not _OFFICIAL_SYNC_LOCK.acquire(blocking=False):
+        return
+
+    try:
+        now = time.time()
+        if interval_seconds > 0 and _LAST_OFFICIAL_SYNC_TS and (now - _LAST_OFFICIAL_SYNC_TS) < interval_seconds:
+            return
+        sync_official_site()
+    except Exception as exc:
+        logger.warning("Automatic official-site sync failed during chat: %s", exc)
+    finally:
+        _OFFICIAL_SYNC_LOCK.release()
 
 
 def get_allowed_origins() -> list[str]:
@@ -167,6 +247,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
+        maybe_auto_sync_official_site(question)
         result = get_rag_service().ask(question)
         return ChatResponse(
             answer=result.get("answer", FALLBACK_ANSWER),
