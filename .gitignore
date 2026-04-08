@@ -1,8 +1,55 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors and IDEs
+.vscode/
+.idea/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
 backend/venv/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Backend generated artifacts
 backend/faiss_index/
 backend/faiss_index_manifest.json
-backend/.env
+
+# Frontend dependencies and build output
 frontend/node_modules/
 frontend/.next/
-__pycache__/
-.DS_Store
+frontend/out/
+frontend/coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
