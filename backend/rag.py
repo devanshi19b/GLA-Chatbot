@@ -9,61 +9,18 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from langchain.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-<<<<<<< HEAD
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.embeddings import Embeddings
-
-try:
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-except ImportError:
-    GoogleGenerativeAIEmbeddings = None
 
 try:
     from .ingestion import DATA_DIR, ensure_data_directories
 except ImportError:
     from ingestion import DATA_DIR, ensure_data_directories
-=======
-from langchain_core.embeddings import Embeddings
-from openai import OpenAI
-
-BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parent
-DATA_DIR = PROJECT_ROOT / "data"
-INDEX_DIR = BASE_DIR / "faiss_index"
-INDEX_MANIFEST_PATH = BASE_DIR / "faiss_index_manifest.json"
-FALLBACK_ANSWER = "Information not available in the brochure"
-
-load_dotenv(BASE_DIR / ".env")
-
-
-class GrokEmbeddings(Embeddings):
-    """Custom embeddings class for Grok API using OpenAI SDK."""
-    
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
-        self.client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
-        self.model = model
-    
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Embed documents using Grok API."""
-        response = self.client.embeddings.create(
-            input=texts,
-            model=self.model,
-        )
-        return [item.embedding for item in response.data]
-    
-    def embed_query(self, text: str) -> list[float]:
-        """Embed a single query using Grok API."""
-        response = self.client.embeddings.create(
-            input=text,
-            model=self.model,
-        )
-        return response.data[0].embedding
->>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -172,24 +129,16 @@ load_dotenv(BASE_DIR / ".env")
 
 class BrochureRAG:
     def __init__(self) -> None:
-<<<<<<< HEAD
         ensure_data_directories()
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Groq API key is missing. Add GROQ_API_KEY to backend/.env before starting the API."
-=======
-        self.api_key = os.getenv("GROK_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "Grok API key is missing. Add GROK_API_KEY to backend/.env before starting the API."
->>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
             )
 
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "2500"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
         self.top_k = int(os.getenv("TOP_K", "4"))
-<<<<<<< HEAD
         self.chat_model = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
         self.embedding_model = os.getenv("HF_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.source_paths = self._get_source_paths()
@@ -223,49 +172,9 @@ class BrochureRAG:
                     ),
                 ),
             ]
-=======
-        self.chat_model = os.getenv("GROK_CHAT_MODEL", "grok-2")
-        self.embedding_model = os.getenv("GROK_EMBEDDING_MODEL", "text-embedding-3-small")
-        self.pdf_paths = self._get_pdf_paths()
-
-        # Initialize Grok embeddings and client
-        self.embeddings = GrokEmbeddings(api_key=self.api_key, model=self.embedding_model)
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url="https://api.x.ai/v1",
-        )
-        
-        self.vector_store = self._load_or_build_vector_store()
-        
-        self.system_prompt = (
-            "You are a brochure-grounded assistant for GLA University. "
-            "Answer ONLY from the supplied brochure context. "
-            "Do not use outside knowledge, do not infer facts that are not clearly supported, "
-            "and keep the answer short and accurate. "
-            f"If the context does not contain the answer, reply exactly with: {FALLBACK_ANSWER}"
->>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
         )
 
-    def _build_embeddings(self) -> Embeddings:
-        if self.embedding_model.lower().startswith("gemini"):
-            if GoogleGenerativeAIEmbeddings is None:
-                raise ValueError(
-                    "Gemini embedding selected but langchain-google-genai is not installed. "
-                    "Add it to requirements and reinstall dependencies."
-                )
-
-            gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-            if not gemini_api_key:
-                raise ValueError(
-                    "Gemini embedding selected but GEMINI_API_KEY is missing. "
-                    "Add GEMINI_API_KEY to backend/.env."
-                )
-
-            return GoogleGenerativeAIEmbeddings(
-                model=self.embedding_model,
-                google_api_key=gemini_api_key,
-            )
-
+    def _build_embeddings(self) -> HuggingFaceEmbeddings:
         try:
             return HuggingFaceEmbeddings(model_name=self.embedding_model)
         except Exception as primary_error:
@@ -521,6 +430,133 @@ class BrochureRAG:
     def _question_prefers_website(self, question: str) -> bool:
         normalized_question = self._normalize_text(question).lower()
         return any(keyword in normalized_question for keyword in {"official", "website", "site", "web"})
+
+    def _question_requests_programme_names(self, question: str) -> bool:
+        normalized_question = self._normalize_text(question).lower()
+        asks_for_programmes = any(
+            keyword in normalized_question
+            for keyword in {
+                "course",
+                "courses",
+                "programme",
+                "programmes",
+                "program",
+                "programs",
+                "specialisation",
+                "specialisations",
+                "specialization",
+                "specializations",
+            }
+        )
+        asks_for_names = any(
+            phrase in normalized_question
+            for phrase in {"what", "which", "list", "name", "show"}
+        )
+        asks_for_count = any(
+            phrase in normalized_question
+            for phrase in {"how many", "number of", "count of"}
+        )
+        return asks_for_programmes and asks_for_names and not asks_for_count
+
+    def _looks_like_programme_name(self, text: str) -> bool:
+        candidate = self._normalize_text(text)
+        if not candidate or len(candidate) > 60:
+            return False
+
+        lowered_candidate = candidate.lower()
+        if lowered_candidate in {
+            "future-ready programmes at gla",
+            "future-ready programs at gla",
+            "about gla",
+            "why gla?",
+            "top recruiters",
+        }:
+            return False
+
+        if any(
+            phrase in lowered_candidate
+            for phrase in {
+                "programme offered",
+                "program offered",
+                "students",
+                "candidates",
+                "marks",
+                "can apply",
+                "will learn",
+                "is a ",
+                "are offered",
+                "career in",
+            }
+        ):
+            return False
+
+        if candidate.endswith((".", "?", "!")):
+            return False
+
+        word_count = len(candidate.split())
+        if word_count > 7:
+            return False
+
+        return bool(re.search(r"[A-Za-z]", candidate))
+
+    def _extract_programme_names(self, matches: list[tuple[Any, float | None]]) -> list[str]:
+        stop_markers = (
+            "GLA - EDUCATION WITH A DIFFERENCE",
+            "PLACEMENT SCENARIO",
+            "The 'INTERNATIONAL' Edge",
+            "ALL ROUNDERS in MAKING",
+        )
+        programme_names: list[str] = []
+        seen_names: set[str] = set()
+
+        for document, _ in matches:
+            content = document.page_content
+            programme_section = content
+            section_match = re.search(
+                r"Future-Ready Programmes at GLA\s+(.*)",
+                content,
+                flags=re.DOTALL,
+            )
+            if section_match:
+                programme_section = section_match.group(1)
+                for stop_marker in stop_markers:
+                    stop_index = programme_section.find(stop_marker)
+                    if stop_index != -1:
+                        programme_section = programme_section[:stop_index]
+                        break
+
+            segments = [
+                self._normalize_text(segment)
+                for segment in re.split(r"\n\s*\n", programme_section)
+            ]
+            for segment in segments:
+                if not self._looks_like_programme_name(segment):
+                    continue
+
+                normalized_key = segment.lower()
+                if normalized_key in seen_names:
+                    continue
+
+                seen_names.add(normalized_key)
+                programme_names.append(segment)
+
+        return programme_names
+
+    def _extract_programme_list_answer(self, question: str, matches: list[tuple[Any, float | None]]) -> str | None:
+        if not self._question_requests_programme_names(question):
+            return None
+
+        programme_names = self._extract_programme_names(matches)
+        if not programme_names:
+            return None
+
+        if len(programme_names) == 1:
+            return programme_names[0]
+
+        if len(programme_names) == 2:
+            return f"Programmes mentioned include {programme_names[0]} and {programme_names[1]}."
+
+        return f"Programmes mentioned include {', '.join(programme_names[:-1])}, and {programme_names[-1]}."
 
     def _score_match(self, question: str, document: Any, score: float | None) -> float:
         normalized_question = self._normalize_text(question)
@@ -838,6 +874,12 @@ class BrochureRAG:
         if website_matches:
             website_context, website_sources = self._build_context(website_matches)
             del website_context
+            website_programme_answer = self._extract_programme_list_answer(
+                interpreted_question,
+                website_matches,
+            )
+            if website_programme_answer:
+                return {"answer": website_programme_answer, "sources": website_sources}
             website_direct_answer = self._extract_direct_answer(interpreted_question, website_matches)
             if website_direct_answer:
                 return {"answer": website_direct_answer, "sources": website_sources}
@@ -853,7 +895,9 @@ class BrochureRAG:
             return {"answer": FALLBACK_ANSWER, "sources": []}
 
         context, sources = self._build_context(matches)
-<<<<<<< HEAD
+        programme_list_answer = self._extract_programme_list_answer(interpreted_question, matches)
+        if programme_list_answer:
+            return {"answer": programme_list_answer, "sources": sources}
         direct_answer = self._extract_direct_answer(interpreted_question, matches)
         if direct_answer:
             return {"answer": direct_answer, "sources": sources}
@@ -863,22 +907,6 @@ class BrochureRAG:
         answer = getattr(response, "content", "").strip() or FALLBACK_ANSWER
         if answer != FALLBACK_ANSWER:
             answer = self._clean_answer_text(answer) or FALLBACK_ANSWER
-=======
-        
-        # Use Grok API directly via OpenAI SDK
-        user_message = f"Question:\n{normalized_question}\n\nBrochure context:\n{context}\n\nReturn only the final answer."
-        
-        response = self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0,
-        )
-        
-        answer = response.choices[0].message.content.strip() or FALLBACK_ANSWER
->>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
 
         if answer != FALLBACK_ANSWER and FALLBACK_ANSWER.lower() in answer.lower():
             answer = FALLBACK_ANSWER

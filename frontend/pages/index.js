@@ -1,7 +1,7 @@
 import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
 
 const starterMessage = {
   role: "assistant",
@@ -265,8 +265,12 @@ export default function Home() {
 
               <header className="flex items-center justify-between gap-3 border-b border-white/30 bg-[linear-gradient(90deg,rgba(9,62,34,0.96),rgba(25,84,49,0.92),rgba(114,108,62,0.88))] px-5 py-4 text-white sm:px-6">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/18 text-sm font-semibold shadow-[0_10px_24px_rgba(255,255,255,0.18)]">
-                    GLA
+                  <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white/85 shadow-[0_10px_24px_rgba(255,255,255,0.18)]">
+                    <img
+                      src="/gla-logo.png"
+                      alt="GLA University logo"
+                      className="h-9 w-9 object-contain"
+                    />
                   </div>
                   <div>
                     <p className="text-base font-semibold sm:text-lg">Talk to GLA Assistant</p>
