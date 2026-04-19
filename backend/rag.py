@@ -16,6 +16,12 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
+
+try:
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+except ImportError:
+    GoogleGenerativeAIEmbeddings = None
 
 try:
     from .ingestion import DATA_DIR, ensure_data_directories
@@ -240,7 +246,26 @@ class BrochureRAG:
 >>>>>>> 4f1101b (Grok API migration: updated rag.py, .env, and dependencies)
         )
 
-    def _build_embeddings(self) -> HuggingFaceEmbeddings:
+    def _build_embeddings(self) -> Embeddings:
+        if self.embedding_model.lower().startswith("gemini"):
+            if GoogleGenerativeAIEmbeddings is None:
+                raise ValueError(
+                    "Gemini embedding selected but langchain-google-genai is not installed. "
+                    "Add it to requirements and reinstall dependencies."
+                )
+
+            gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not gemini_api_key:
+                raise ValueError(
+                    "Gemini embedding selected but GEMINI_API_KEY is missing. "
+                    "Add GEMINI_API_KEY to backend/.env."
+                )
+
+            return GoogleGenerativeAIEmbeddings(
+                model=self.embedding_model,
+                google_api_key=gemini_api_key,
+            )
+
         try:
             return HuggingFaceEmbeddings(model_name=self.embedding_model)
         except Exception as primary_error:
