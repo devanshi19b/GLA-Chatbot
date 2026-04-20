@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from difflib import get_close_matches
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -13,9 +14,14 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
+from langchain_pinecone import PineconeVectorStore
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
+
+import pytesseract
+from pdf2image import convert_from_path
+from pinecone import Pinecone
 
 try:
     from .ingestion import DATA_DIR, ensure_data_directories
@@ -24,8 +30,6 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
-INDEX_DIR = BASE_DIR / "faiss_index"
-INDEX_MANIFEST_PATH = BASE_DIR / "faiss_index_manifest.json"
 FALLBACK_ANSWER = "Information not available in the indexed sources"
 STOPWORDS = {
     "a",
@@ -125,6 +129,7 @@ DOMAIN_TERMS = {
 }
 
 load_dotenv(BASE_DIR / ".env")
+logger = logging.getLogger(__name__)
 
 
 class BrochureRAG:
@@ -142,6 +147,14 @@ class BrochureRAG:
         self.chat_model = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
         self.embedding_model = os.getenv("HF_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.source_paths = self._get_source_paths()
+
+        self.pinecone_api_key = os.getenv("pineconedb").strip()
+        self.pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", "gla-chatbot")
+        os.environ["PINECONE_API_KEY"] = self.pinecone_api_key
+        self.pc = Pinecone(api_key=self.pinecone_api_key)
+        
+        # Ensure the Pinecone index exists
+        self._ensure_pinecone_index()
 
         self.embeddings = self._build_embeddings()
         self.vector_store = self._load_or_build_vector_store()
@@ -177,6 +190,28 @@ class BrochureRAG:
     def _build_embeddings(self) -> HuggingFaceEmbeddings:
         try:
             return HuggingFaceEmbeddings(model_name=self.embedding_model)
+        except Exception as e:
+            raise ValueError(f"Failed to initialize embeddings: {e}") from e
+
+    def _ensure_pinecone_index(self) -> None:
+        """Ensure the Pinecone index exists; create it if necessary."""
+        try:
+            indexes = self.pc.list_indexes()
+            if self.pinecone_index_name not in indexes.names():
+                from pinecone import ServerlessSpec
+                self.pc.create_index(
+                    name=self.pinecone_index_name,
+                    dimension=384,  # Dimension for all-MiniLM-L6-v2
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1")
+                )
+                logger.info(f"Created Pinecone index: {self.pinecone_index_name}")
+        except Exception as e:
+            logger.warning(f"Could not verify/create Pinecone index: {e}")
+
+    def _build_embeddings(self) -> HuggingFaceEmbeddings:
+        try:
+            return HuggingFaceEmbeddings(model_name=self.embedding_model)
         except Exception as primary_error:
             try:
                 return HuggingFaceEmbeddings(
@@ -196,33 +231,6 @@ class BrochureRAG:
             raise FileNotFoundError(f"No supported source files found in {DATA_DIR}")
         return source_paths
 
-    def _build_index_manifest(self) -> dict[str, Any]:
-        return {
-            "schema_version": 2,
-            "chunk_size": self.chunk_size,
-            "chunk_overlap": self.chunk_overlap,
-            "embedding_model": self.embedding_model,
-            "files": [
-                {
-                    "name": str(source_path.relative_to(DATA_DIR)),
-                    "size": source_path.stat().st_size,
-                    "mtime_ns": source_path.stat().st_mtime_ns,
-                }
-                for source_path in self.source_paths
-            ],
-        }
-
-    def _index_is_current(self, manifest: dict[str, Any]) -> bool:
-        if not INDEX_DIR.exists() or not INDEX_MANIFEST_PATH.exists():
-            return False
-
-        try:
-            saved_manifest = json.loads(INDEX_MANIFEST_PATH.read_text())
-        except (OSError, json.JSONDecodeError):
-            return False
-
-        return saved_manifest == manifest
-
     def _load_documents(self) -> list[Any]:
         documents: list[Any] = []
 
@@ -231,11 +239,33 @@ class BrochureRAG:
 
             if suffix == ".pdf":
                 loaded_documents = PyPDFLoader(str(source_path)).load()
-                for document in loaded_documents:
-                    document.metadata["source_file"] = source_path.name
-                    document.metadata["source_path"] = str(source_path.relative_to(DATA_DIR))
-                    if document.page_content.strip():
-                        documents.append(document)
+                has_text = any(doc.page_content.strip() for doc in loaded_documents)
+                if has_text:
+                    for document in loaded_documents:
+                        document.metadata["source_file"] = source_path.name
+                        document.metadata["source_path"] = str(source_path.relative_to(DATA_DIR))
+                        if document.page_content.strip():
+                            documents.append(document)
+                else:
+                    # Assume scanned PDF, use OCR
+                    try:
+                        images = convert_from_path(str(source_path))
+                        for i, image in enumerate(images):
+                            text = pytesseract.image_to_string(image)
+                            if text.strip():
+                                documents.append(
+                                    Document(
+                                        page_content=text,
+                                        metadata={
+                                            "source_file": source_path.name,
+                                            "source_path": str(source_path.relative_to(DATA_DIR)),
+                                            "page": i,
+                                        },
+                                    )
+                                )
+                    except Exception as e:
+                        # If OCR fails, skip
+                        continue
                 continue
 
             if suffix == ".json":
@@ -256,7 +286,6 @@ class BrochureRAG:
                             "source_path": str(source_path.relative_to(DATA_DIR)),
                             "source_url": payload.get("url"),
                             "title": payload.get("title"),
-                            "page": None,
                         },
                     )
                 )
@@ -274,7 +303,6 @@ class BrochureRAG:
                         metadata={
                             "source_file": source_path.name,
                             "source_path": str(source_path.relative_to(DATA_DIR)),
-                            "page": None,
                         },
                     )
                 )
@@ -593,15 +621,7 @@ class BrochureRAG:
             - noise_penalty
         )
 
-    def _load_or_build_vector_store(self) -> FAISS:
-        manifest = self._build_index_manifest()
-        if self._index_is_current(manifest):
-            return FAISS.load_local(
-                str(INDEX_DIR),
-                self.embeddings,
-                allow_dangerous_deserialization=True,
-            )
-
+    def _load_or_build_vector_store(self) -> PineconeVectorStore:
         documents = self._load_documents()
         if not documents:
             raise ValueError(
@@ -617,10 +637,7 @@ class BrochureRAG:
         for index, chunk in enumerate(chunks):
             chunk.metadata["chunk_index"] = index
 
-        vector_store = FAISS.from_documents(chunks, self.embeddings)
-        INDEX_DIR.mkdir(parents=True, exist_ok=True)
-        vector_store.save_local(str(INDEX_DIR))
-        INDEX_MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
+        vector_store = PineconeVectorStore.from_documents(chunks, self.embeddings, index_name=self.pinecone_index_name)
         return vector_store
 
     def _retrieve_documents(self, question: str) -> list[tuple[Any, float | None]]:
